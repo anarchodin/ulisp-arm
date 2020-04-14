@@ -48,13 +48,20 @@ const char LispLibrary[] PROGMEM = "";
 #define push(x, y)         ((y) = cons((x),(y)))
 #define pop(y)             ((y) = cdr(y))
 
-#define integerp(x)        ((x) != NULL && ((x)->type == NUMBER || (x)->type == NUMHEX))
-#define floatp(x)          ((x) != NULL && (x)->type == FLOAT)
-#define symbolp(x)         ((x) != NULL && (x)->type == SYMBOL)
-#define stringp(x)         ((x) != NULL && (x)->type == STRING)
-#define characterp(x)      ((x) != NULL && (x)->type == CHARACTER)
-#define arrayp(x)          ((x) != NULL && (x)->type == ARRAY)
-#define streamp(x)         ((x) != NULL && (x)->type == STREAM)
+// Immediate types
+#define immediatep(x)      ((x) != NULL && ((uintptr_t)(x) & 2) == 2) // All immediates.
+#define fixnump(x)         ((x) != NULL && ((uintptr_t)(x) & 6) == 2) // Tagged integers.
+
+// Boxed types
+#define boxedp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 14) == 6)
+#define codep(x)           ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == CODE)
+#define integerp(x)        ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type == NUMBER || (x)->type == NUMHEX))
+#define floatp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == FLOAT)
+#define symbolp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == SYMBOL)
+#define stringp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STRING)
+#define characterp(x)      ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == CHARACTER)
+#define arrayp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == ARRAY)
+#define streamp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STREAM)
 
 #define mark(x)            (car(x) = (object *)(((uintptr_t)(car(x))) | MARKBIT))
 #define unmark(x)          (car(x) = (object *)(((uintptr_t)(car(x))) & ~MARKBIT))
@@ -71,9 +78,24 @@ const char LispLibrary[] PROGMEM = "";
 
 // Constants
 
+// Type identifiers. Four last bits fixed at 6.
+#define ZERO 0 // (0 << 4 | 6)
+#define SYMBOL 22 // (1 << 4 | 6)
+#define CODE 38 // (2 << 4 | 6)
+#define NUMBER 54 // (3 << 4 | 6)
+#define NUMHEX 70 // (4 << 4 | 6)
+#define STREAM 86 // (5 << 4 | 6)
+#define CHARACTER 102 // (6 << 4 | 6)
+#define FLOAT 118 // (7 << 4 | 6)
+#define STRING 134 // (8 << 4 | 6)
+#define ARRAY 150 // (9 << 4 | 6)
+
+#define BRA 0x80000006 // Same value space as types, but high bit set.
+#define KET 0xA0000006 // Using the next two bits to code four values.
+#define QUO 0xC0000006 // I doubt this will collide with types any time soon.
+#define DOT 0xE0000006
+
 const int TRACEMAX = 3; // Number of traced functions
-enum type { ZZERO=0, SYMBOL=2, CODE=4, NUMBER=6, NUMHEX=8, STREAM=10, CHARACTER=12, FLOAT=14, ARRAY=16, STRING=18, PAIR=20 };  // ARRAY STRING and PAIR must be last
-enum token { UNUSED, BRA, KET, QUO, DOT };
 enum stream { SERIALSTREAM, I2CSTREAM, SPISTREAM, SDSTREAM, STRINGSTREAM };
 
 enum function { NIL, TEE, NOTHING, OPTIONAL, INITIALELEMENT, AMPREST, LAMBDA, LET, LETSTAR, CLOSURE,
@@ -91,7 +113,7 @@ PRINCTOSTRING, PRIN1TOSTRING, LOGAND, LOGIOR, LOGXOR, LOGNOT, ASH, LOGBITP, EVAL
 MAKUNBOUND, BREAK, READ, PRIN1, PRINT, PRINC, TERPRI, READBYTE, READLINE, WRITEBYTE, WRITESTRING,
 WRITELINE, RESTARTI2C, GC, ROOM, SAVEIMAGE, LOADIMAGE, CLS, PINMODE, DIGITALREAD, DIGITALWRITE,
 ANALOGREAD, ANALOGWRITE, DELAY, MILLIS, SLEEP, NOTE, EDIT, PPRINT, PPRINTALL, REQUIRE, LISTLIBRARY,
-FORMAT, ARRAYDIMENSIONS, ENDFUNCTIONS };
+FORMAT, ARRAYDIMENSIONS, FIXNUMP, ENDFUNCTIONS };
 
 // Typedefs
 
@@ -271,6 +293,7 @@ object *myalloc () {
 }
 
 inline void myfree (object *obj) {
+  if (((uintptr_t)obj & 2) != 0) return; // decline non-pointers
   car(obj) = NULL;
   cdr(obj) = Freelist;
   Freelist = obj;
@@ -280,10 +303,14 @@ inline void myfree (object *obj) {
 // Make each type of object
 
 object *number (int n) {
-  object *ptr = myalloc();
-  ptr->type = NUMBER;
-  ptr->integer = n;
-  return ptr;
+  if (n > (1<<28) - 1 || n < -(1<<28)) {
+    object *ptr = myalloc();
+    ptr->type = NUMBER;
+    ptr->integer = n;
+    return ptr;
+  } else {
+    return (object *)((n << 3) | 2);
+  }
 }
 
 object *numhex (int n) {
@@ -348,14 +375,23 @@ object *stream (unsigned char streamtype, unsigned char address) {
 void markobject (object *obj) {
   MARK:
   if (obj == NULL) return;
+  if (((uintptr_t)obj & 2) != 0) return; // make sure it doesn't try to deref non-pointers
   if (marked(obj)) return;
 
   object* arg = car(obj);
   unsigned int type = obj->type;
   mark(obj);
   
-  if (type >= PAIR || type == ZZERO || type == ARRAY) { // cons
+  if ((type & 2) == 0) { // cons with allocated car
     markobject(arg);
+    obj = cdr(obj);
+    goto MARK;
+  } else if ((type & 15) != 6) { // cons with immediate car
+    obj = cdr(obj);
+    goto MARK;
+  }
+
+  if (type == ARRAY) {
     obj = cdr(obj);
     goto MARK;
   }
@@ -400,7 +436,7 @@ void movepointer (object *from, object *to) {
   for (int i=0; i<WORKSPACESIZE; i++) {
     object *obj = &Workspace[i];
     unsigned int type = (obj->type) & ~MARKBIT;
-    if (marked(obj) && (type >= ARRAY || type==ZZERO)) {
+    if (marked(obj) && ((((uintptr_t)type & 6) == 0) || type == ARRAY || type == STRING)) {
       if (car(obj) == (object *)((uintptr_t)from | MARKBIT)) 
         car(obj) = (object *)((uintptr_t)to | MARKBIT);
       if (cdr(obj) == from) cdr(obj) = to;
@@ -796,28 +832,31 @@ void untrace (symbol_t name) {
 
 // Helper functions
 
-bool consp (object *x) {
-  if (x == NULL) return false;
+boolean consp (object *x) {
+  if (x == NULL || ((uintptr_t) x & 2) != 0) return false; // NULL or immediate are not conses.
   unsigned int type = x->type;
-  return type >= PAIR || type == ZZERO;
+  return (type & 14) != 6; // Anything that isn't a type flag is cons.
 }
 
-bool atom (object *x) {
-  if (x == NULL) return true;
+boolean atom (object *x) {
+  if (x == NULL) return true; // NIL is a symbol, so is an atom.
+  if (((uintptr_t)x & 2) == 2) return true; // Immediate, so an atom.
   unsigned int type = x->type;
-  return type < PAIR && type != ZZERO;
+  return (type & 14) == 6; // It's an atom if there's a type identifier.
 }
 
-bool listp (object *x) {
-  if (x == NULL) return true;
+boolean listp (object *x) {
+  if (x == NULL) return true; // NIL is the empty list, so true.
+  if (((uintptr_t)x & 2) != 0) return false; // Immediate, so not a list.
   unsigned int type = x->type;
-  return type >= PAIR || type == ZZERO;
+  return (type & 14) != 6; // It's a cons if the type field isn't a type identifier.
 }
 
-bool improperp (object *x) {
-  if (x == NULL) return false;
-  unsigned int type = x->type;
-  return type < PAIR && type != ZZERO;
+boolean improperp (object *x) {
+  if (x == NULL) return false; // NIL is a proper list.
+  if (((uintptr_t)x & 2) != 0) return false; // If the 2-bit is set this is not a cons.
+  uintptr_t tail = (uintptr_t)x->cdr;
+  return (tail&2) != 0; // If the cdr is not a pointer, this is a dotted cons.
 }
 
 object *quote (object *arg) {
@@ -875,8 +914,13 @@ int digitvalue (char d) {
 }
 
 int checkinteger (symbol_t name, object *obj) {
-  if (!integerp(obj)) error(name, PSTR("argument is not an integer"), obj);
-  return obj->integer;
+  if (integerp(obj)) {
+    return obj->integer;
+  } else if (fixnump(obj)) {
+    return (int)obj>>3; // Tagged integer, three bits go away.
+  } else {
+    error(name, PSTR("argument is not an integer"), obj);
+  }
 }
 
 float checkintfloat (symbol_t name, object *obj){
@@ -974,7 +1018,11 @@ object *makearray (int n, int s, object *def) {
 object **getarray (object *array, int x, int y) {
   object *dimensions = cddr(array);
   int xd, yd = 1;
-  if (listp(dimensions)) { xd = first(dimensions)->integer; yd = second(dimensions)->integer; }
+  if (listp(dimensions)) {
+    xd = (((uintptr_t) first(dimensions) & 2) == 0) ? first(dimensions)->integer : (int)first(dimensions)>>3;
+    yd = (((uintptr_t) second(dimensions) & 2) == 0) ? second(dimensions)->integer : (int)second(dimensions)>>3;
+  }
+  else if (fixnump(dimensions)) xd = (int)dimensions>>3;
   else xd = dimensions->integer;
   int size = xd * yd;
   int index = x * yd + y;
@@ -991,7 +1039,8 @@ object **getarray (object *array, int x, int y) {
 void printarray (object *array, pfun_t pfun) {
   object *dimensions = cddr(array);
   if (listp(dimensions)) {
-    int xd = first(dimensions)->integer, yd = second(dimensions)->integer;
+    int xd = (((uintptr_t) first(dimensions) & 2) == 0) ? first(dimensions)->integer : (int)first(dimensions)>>3;
+    int yd = (((uintptr_t) second(dimensions) & 2) == 0) ? second(dimensions)->integer : (int)second(dimensions)>>3;
     pfstring(PSTR("#2A("), pfun);
     for (int x=0; x<xd; x++) {
       if (x) pfun(' '); pfun('(');
@@ -1003,7 +1052,7 @@ void printarray (object *array, pfun_t pfun) {
     }  
   } else {
     pfstring(PSTR("#("), pfun);
-    int xd = dimensions->integer;
+    int xd = (((uintptr_t) dimensions & 2) == 0) ? dimensions->integer : (int)dimensions>>3;
     for (int x=0; x<xd; x++) {
       if (x) pfun(' ');
       printobject(*getarray(array, x, 0), pfun);
@@ -2052,6 +2101,7 @@ object *sp_withi2c (object *args, object *env) {
   if (params != NULL) {
     object *rw = eval(first(params), env);
     if (integerp(rw)) I2CCount = rw->integer;
+    if (fixnump(rw)) I2CCount = (int)rw>>3;
     read = (rw != NULL);
   }
   I2Cinit(1); // Pullups
@@ -2184,7 +2234,7 @@ object *sp_defcode (object *args, object *env) {
     object *pair = car(globals);
     if (pair != NULL && car(pair) != var) { // Exclude me if I already exist
       object *codeid = second(pair);
-      if (codeid->type == CODE) {
+      if (codep(codeid)) {
         codesize = codesize + endblock(codeid) - startblock(codeid);
       }
     }
@@ -3064,10 +3114,15 @@ object *fn_integerp (object *args, object *env) {
   return integerp(first(args)) ? tee : nil;
 }
 
+object *fn_fixnump (object *args, object *env) {
+  (void) env;
+  return fixnump(first(args)) ? tee : nil;
+}
+
 object *fn_numberp (object *args, object *env) {
   (void) env;
   object *arg = first(args);
-  return (integerp(arg) || floatp(arg)) ? tee : nil;
+  return (fixnump(arg) || integerp(arg) || floatp(arg)) ? tee : nil;
 }
 
 // Floating-point functions
@@ -3634,8 +3689,8 @@ object *fn_pinmode (object *args, object *env) {
   int pin = checkinteger(PINMODE, first(args));
   PinMode pm = INPUT;
   object *mode = second(args);
-  if (integerp(mode)) {
-    int nmode = mode->integer;
+  if (integerp(mode) || fixnump(mode)) {
+    int nmode = checkinteger(PINMODE, mode);
     if (nmode == 1) pm = OUTPUT; else if (nmode == 2) pm = INPUT_PULLUP;
     #if defined(INPUT_PULLDOWN)
     else if (nmode == 4) pm = INPUT_PULLDOWN;
@@ -3656,6 +3711,7 @@ object *fn_digitalwrite (object *args, object *env) {
   int pin = checkinteger(DIGITALWRITE, first(args));
   object *mode = second(args);
   if (integerp(mode)) digitalWrite(pin, mode->integer ? HIGH : LOW);
+  else if (fixnump(mode)) digitalWrite(pin, (int)mode>>3 ? HIGH : LOW);
   else digitalWrite(pin, (mode != nil) ? HIGH : LOW);
   return mode;
 }
@@ -4065,6 +4121,7 @@ const char string184[] PROGMEM = "require";
 const char string185[] PROGMEM = "list-library";
 const char string186[] PROGMEM = "format";
 const char string187[] PROGMEM = "array-dimensions";
+const char string188[] PROGMEM = "fixnump";
 
 const tbl_entry_t lookup_table[] PROGMEM = {
   { string0, NULL, 0, 0 },
@@ -4255,6 +4312,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string185, fn_listlibrary, 0, 0 },
   { string186, fn_format, 2, 127 },
   { string187, fn_arraydimensions, 1, 1 },
+  { string188, fn_fixnump, 0, 0 },
 };
 
 // Table lookup functions
@@ -4338,8 +4396,8 @@ object *eval (object *form, object *env) {
   #endif
 
   if (form == NULL) return nil;
-    
-  if (form->type >= NUMBER && form->type <= STRING) return form;
+
+  if (immediatep(form) || boxedp(form)) return form;
 
   if (symbolp(form)) {
     symbol_t name = form->name;
@@ -4352,9 +4410,10 @@ object *eval (object *form, object *env) {
     error(0, PSTR("undefined"), form);
   }
 
-  if (form->type == CODE) error2(0, PSTR("can't evaluate CODE header"));
-
+  if (codep(form)) error2(0, PSTR("can't evaluate CODE header"));
+  
   // It's a list
+
   object *function = car(form);
   object *args = cdr(form);
 
@@ -4651,14 +4710,15 @@ void printobject (object *form, pfun_t pfun) {
       printobject(form, pfun);
     }
     pfun(')');
-  } else if (form->type == NUMHEX) { pfun('#'); pfun('x'); pinthex(form->integer, pfun); }
+  } else if (((uintptr_t) form & 2 == 0) && form->type == NUMHEX) pinthex(form->integer, pfun);
   else if (integerp(form)) pint(form->integer, pfun);
+  else if (fixnump(form)) pint((int)form>>3, pfun);
   else if (floatp(form)) pfloat(form->single_float, pfun);
   else if (symbolp(form)) { if (form->name != NOTHING) pstring(symbolname(form->name), pfun); }
   else if (characterp(form)) pcharacter(form->integer, pfun);
   else if (stringp(form)) printstring(form, pfun);
   else if (arrayp(form)) printarray(form, pfun);
-  else if (form->type == CODE) pfstring(PSTR("code"), pfun);
+  else if (codep(form)) pfstring(PSTR("code"), pfun);
   else if (streamp(form)) {
     pfun('<');
     if ((form->integer)>>8 == SPISTREAM) pfstring(PSTR("spi"), pfun);
