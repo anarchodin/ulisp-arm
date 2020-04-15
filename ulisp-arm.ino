@@ -957,10 +957,12 @@ void checkargs (symbol_t name, object *args) {
 
 int eq (object *arg1, object *arg2) {
   if (arg1 == arg2) return true;  // Same object
+  if (immediatep(arg1) && immediatep(arg2)) return false; // Immediates are not eq if different objects.
   if ((arg1 == nil) || (arg2 == nil)) return false;  // Not both values
+  if (intp(arg1) && intp(arg2)) return getint(arg1) == getint(arg2);  // Check for integer equality.
+  if (immediatep(arg1) || immediatep(arg2)) return false; // If either arg is still immediate, it's not eq.
   if (arg1->cdr != arg2->cdr) return false;  // Different values
   if (symbolp(arg1) && symbolp(arg2)) return true;  // Same symbol
-  if (integerp(arg1) && integerp(arg2)) return true;  // Same integer
   if (floatp(arg1) && floatp(arg2)) return true; // Same float
   if (characterp(arg1) && characterp(arg2)) return true;  // Same character
   return false;
