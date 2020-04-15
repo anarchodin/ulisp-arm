@@ -4323,7 +4323,7 @@ const tbl_entry_t lookup_table[] PROGMEM = {
   { string185, fn_listlibrary, 0, 0 },
   { string186, fn_format, 2, 127 },
   { string187, fn_arraydimensions, 1, 1 },
-  { string188, fn_fixnump, 0, 0 },
+  { string188, fn_fixnump, 1, 1 },
 };
 
 // Table lookup functions
