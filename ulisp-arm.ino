@@ -63,6 +63,10 @@ const char LispLibrary[] PROGMEM = "";
 #define arrayp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == ARRAY)
 #define streamp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STREAM)
 
+// Working with types that can be either
+#define intp(x)            (integerp(x) || fixnump(x))
+#define getint(x)          (integerp(x) ? x->integer : (int)x>>3)
+
 #define mark(x)            (car(x) = (object *)(((uintptr_t)(car(x))) | MARKBIT))
 #define unmark(x)          (car(x) = (object *)(((uintptr_t)(car(x))) & ~MARKBIT))
 #define marked(x)          ((((uintptr_t)(car(x))) & MARKBIT) != 0)
@@ -925,6 +929,7 @@ int checkinteger (symbol_t name, object *obj) {
 
 float checkintfloat (symbol_t name, object *obj){
   if (integerp(obj)) return obj->integer;
+  if (fixnump(obj)) return (int)obj>>3;
   if (floatp(obj)) return obj->single_float;
   error(name, notanumber, obj);
 }
@@ -1722,6 +1727,7 @@ object *call (int entry, int nargs, object *args, object *env) {
   for (int i=0; i<nargs; i++) {
     object *arg = first(args);
     if (integerp(arg)) param[i] = arg->integer;
+    else if (fixnump(arg)) param[i] = (int)arg>>3;
     else param[i] = (uintptr_t)arg;
     args = cdr(args);
   }
@@ -1770,7 +1776,7 @@ int assemble (int pass, int origin, object *entries, object *env, object *pcpair
           cdr(pcpair) = number(pc);
           arglist = cdr(arglist);
         }
-      } else if (integerp(argval)) {
+      } else if (intp(argval)) {
         if (pass == 2) {
           putcode(argval, origin, pc);
           #if defined(assemblerlist)
@@ -1888,12 +1894,12 @@ object *sp_incf (object *args, object *env) {
     else increment = checkintfloat(INCF, inc);
 
     *loc = makefloat(value + increment);
-  } else if (integerp(x) && (integerp(inc) || inc == NULL)) {
+  } else if (intp(x) && (intp(inc) || inc == NULL)) {
     int increment;
-    int value = x->integer;
+    int value = getint(x);
 
     if (inc == NULL) increment = 1;
-    else increment = inc->integer;
+    else increment = getint(inc);
 
     if (increment < 1) {
       if (INT_MIN - increment > value) *loc = makefloat((float)value + (float)increment);
@@ -1922,12 +1928,12 @@ object *sp_decf (object *args, object *env) {
     else decrement = checkintfloat(DECF, dec);
 
     *loc = makefloat(value - decrement);
-  } if (integerp(x) && (integerp(dec) || dec == NULL)) {
+  } if (intp(x) && (intp(dec) || dec == NULL)) {
     int decrement;
-    int value = x->integer;
+    int value = getint(x);
 
     if (dec == NULL) decrement = 1;
-    else decrement = dec->integer;
+    else decrement = getint(dec);
 
     if (decrement < 1) {
       if (INT_MAX + decrement < value) *loc = makefloat((float)value - (float)decrement);
@@ -2760,8 +2766,8 @@ object *fn_add (object *args, object *env) {
   while (args != NULL) {
     object *arg = car(args);
     if (floatp(arg)) return add_floats(args, (float)result);
-    else if (integerp(arg)) {
-      int val = arg->integer;
+    else if (intp(arg)) {
+      int val = getint(arg);
       if (val < 1) { if (INT_MIN - val > result) return add_floats(args, (float)result); }
       else { if (INT_MAX - val < result) return add_floats(args, (float)result); }
       result = result + val;
@@ -2781,8 +2787,8 @@ object *subtract_floats (object *args, float fresult) {
 }
 
 object *negate (object *arg) {
-  if (integerp(arg)) {
-    int result = arg->integer;
+  if (intp(arg)) {
+    int result = getint(arg);
     if (result == INT_MIN) return makefloat(-result);
     else return number(-result);
   } else if (floatp(arg)) return makefloat(-(arg->single_float));
@@ -2795,13 +2801,13 @@ object *fn_subtract (object *args, object *env) {
   args = cdr(args);
   if (args == NULL) return negate(arg);
   else if (floatp(arg)) return subtract_floats(args, arg->single_float);
-  else if (integerp(arg)) {
-    int result = arg->integer;
+  else if (intp(arg)) {
+    int result = getint(arg);
     while (args != NULL) {
       arg = car(args);
       if (floatp(arg)) return subtract_floats(args, result);
-      else if (integerp(arg)) {
-        int val = (car(args))->integer;
+      else if (intp(arg)) {
+        int val = getint((car(args)));
         if (val < 1) { if (INT_MAX + val < result) return subtract_floats(args, result); }
         else { if (INT_MIN + val > result) return subtract_floats(args, result); }
         result = result - val;
@@ -2827,8 +2833,9 @@ object *fn_multiply (object *args, object *env) {
   while (args != NULL){
     object *arg = car(args);
     if (floatp(arg)) return multiply_floats(args, result);
-    else if (integerp(arg)) {
-      int64_t val = result * (int64_t)(arg->integer);
+    else if (intp(arg)) {
+      int argval = getint(arg);
+      int64_t val = result * (int64_t)argval;
       if ((val > INT_MAX) || (val < INT_MIN)) return multiply_floats(args, result);
       result = val;
     } else error(MULTIPLY, notanumber, arg);
@@ -2858,8 +2865,8 @@ object *fn_divide (object *args, object *env) {
       float f = arg->single_float;
       if (f == 0.0) error2(DIVIDE, PSTR("division by zero"));
       return makefloat(1.0 / f);
-    } else if (integerp(arg)) {
-      int i = arg->integer;
+    } else if (intp(arg)) {
+      int i = getint(arg);
       if (i == 0) error2(DIVIDE, PSTR("division by zero"));
       else if (i == 1) return number(1);
       else return makefloat(1.0 / i);
@@ -2867,14 +2874,14 @@ object *fn_divide (object *args, object *env) {
   }    
   // Multiple arguments
   if (floatp(arg)) return divide_floats(args, arg->single_float);
-  else if (integerp(arg)) {
-    int result = arg->integer;
+  else if (intp(arg)) {
+    int result = getint(arg);
     while (args != NULL) {
       arg = car(args);
       if (floatp(arg)) {
         return divide_floats(args, result);
-      } else if (integerp(arg)) {       
-        int i = arg->integer;
+      } else if (intp(arg)) {
+        int i = getint(arg);
         if (i == 0) error2(DIVIDE, PSTR("division by zero"));
         if ((result % i) != 0) return divide_floats(args, result);
         if ((result == INT_MIN) && (i == -1)) return divide_floats(args, result);
@@ -2890,10 +2897,10 @@ object *fn_mod (object *args, object *env) {
   (void) env;
   object *arg1 = first(args);
   object *arg2 = second(args);
-  if (integerp(arg1) && integerp(arg2)) {
-    int divisor = arg2->integer;
+  if (intp(arg1) && intp(arg2)) {
+    int divisor = getint(arg2);
     if (divisor == 0) error2(MOD, PSTR("division by zero"));
-    int dividend = arg1->integer;
+    int dividend = getint(arg1);
     int remainder = dividend % divisor;
     if ((dividend<0) != (divisor<0)) remainder = remainder + divisor;
     return number(remainder);
@@ -2911,9 +2918,9 @@ object *fn_oneplus (object *args, object *env) {
   (void) env;
   object* arg = first(args);
   if (floatp(arg)) return makefloat((arg->single_float) + 1.0);
-  else if (integerp(arg)) {
-    int result = arg->integer;
-    if (result == INT_MAX) return makefloat((arg->integer) + 1.0);
+  else if (intp(arg)) {
+    int result = getint(arg);
+    if (result == INT_MAX) return makefloat(getint(arg) + 1.0);
     else return number(result + 1);
   } else error(ONEPLUS, notanumber, arg);
 }
@@ -2922,9 +2929,9 @@ object *fn_oneminus (object *args, object *env) {
   (void) env;
   object* arg = first(args);
   if (floatp(arg)) return makefloat((arg->single_float) - 1.0);
-  else if (integerp(arg)) {
-    int result = arg->integer;
-    if (result == INT_MIN) return makefloat((arg->integer) - 1.0);
+  else if (intp(arg)) {
+    int result = getint(arg);
+    if (result == INT_MIN) return makefloat(getint(arg) - 1.0);
     else return number(result - 1);
   } else error(ONEMINUS, notanumber, arg);
 }
@@ -2933,8 +2940,8 @@ object *fn_abs (object *args, object *env) {
   (void) env;
   object *arg = first(args);
   if (floatp(arg)) return makefloat(abs(arg->single_float));
-  else if (integerp(arg)) {
-    int result = arg->integer;
+  else if (intp(arg)) {
+    int result = getint(arg);
     if (result == INT_MIN) return makefloat(abs((float)result));
     else return number(abs(result));
   } else error(ABS, notanumber, arg);
@@ -2944,6 +2951,7 @@ object *fn_random (object *args, object *env) {
   (void) env;
   object *arg = first(args);
   if (integerp(arg)) return number(random(arg->integer));
+  else if (fixnump(arg)) return number(random((int)arg>>3));
   else if (floatp(arg)) return makefloat((float)rand()/(float)(RAND_MAX/(arg->single_float)));
   else error(RANDOM, notanumber, arg);
 }
@@ -2954,8 +2962,8 @@ object *fn_maxfn (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg = car(args);
-    if (integerp(result) && integerp(arg)) {
-      if ((arg->integer) > (result->integer)) result = arg;
+    if (intp(result) && intp(arg)) {
+      if (getint(arg) > getint(result)) result = arg;
     } else if ((checkintfloat(MAXFN, arg) > checkintfloat(MAXFN, result))) result = arg;
     args = cdr(args); 
   }
@@ -2968,8 +2976,8 @@ object *fn_minfn (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg = car(args);
-    if (integerp(result) && integerp(arg)) {
-      if ((arg->integer) < (result->integer)) result = arg;
+    if (intp(result) && intp(arg)) {
+      if ((getint(arg)) < (getint(result))) result = arg;
     } else if ((checkintfloat(MINFN, arg) < checkintfloat(MINFN, result))) result = arg;
     args = cdr(args); 
   }
@@ -2986,8 +2994,8 @@ object *fn_noteq (object *args, object *env) {
     nargs = cdr(nargs);
     while (nargs != NULL) {
       object *arg2 = first(nargs);
-      if (integerp(arg1) && integerp(arg2)) {
-        if ((arg1->integer) == (arg2->integer)) return nil;
+      if (intp(arg1) && intp(arg2)) {
+        if (getint(arg1) == getint(arg2)) return nil;
       } else if ((checkintfloat(NOTEQ, arg1) == checkintfloat(NOTEQ, arg2))) return nil;
       nargs = cdr(nargs);
     }
@@ -3002,8 +3010,8 @@ object *fn_numeq (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg2 = first(args);
-    if (integerp(arg1) && integerp(arg2)) {
-      if (!((arg1->integer) == (arg2->integer))) return nil;
+    if (intp(arg1) && intp(arg2)) {
+      if (!(getint(arg1) == getint(arg2))) return nil;
     } else if (!(checkintfloat(NUMEQ, arg1) == checkintfloat(NUMEQ, arg2))) return nil;
     arg1 = arg2;
     args = cdr(args);
@@ -3017,8 +3025,8 @@ object *fn_less (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg2 = first(args);
-    if (integerp(arg1) && integerp(arg2)) {
-      if (!((arg1->integer) < (arg2->integer))) return nil;
+    if (intp(arg1) && intp(arg2)) {
+      if (!(getint(arg1) < getint(arg2))) return nil;
     } else if (!(checkintfloat(LESS, arg1) < checkintfloat(LESS, arg2))) return nil;
     arg1 = arg2;
     args = cdr(args);
@@ -3032,8 +3040,8 @@ object *fn_lesseq (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg2 = first(args);
-    if (integerp(arg1) && integerp(arg2)) {
-      if (!((arg1->integer) <= (arg2->integer))) return nil;
+    if (intp(arg1) && intp(arg2)) {
+      if (!(getint(arg1) <= getint(arg2))) return nil;
     } else if (!(checkintfloat(LESSEQ, arg1) <= checkintfloat(LESSEQ, arg2))) return nil;
     arg1 = arg2;
     args = cdr(args);
@@ -3047,8 +3055,8 @@ object *fn_greater (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg2 = first(args);
-    if (integerp(arg1) && integerp(arg2)) {
-      if (!((arg1->integer) > (arg2->integer))) return nil;
+    if (intp(arg1) && intp(arg2)) {
+      if (!(getint(arg1) > getint(arg2))) return nil;
     } else if (!(checkintfloat(GREATER, arg1) > checkintfloat(GREATER, arg2))) return nil;
     arg1 = arg2;
     args = cdr(args);
@@ -3062,8 +3070,8 @@ object *fn_greatereq (object *args, object *env) {
   args = cdr(args);
   while (args != NULL) {
     object *arg2 = first(args);
-    if (integerp(arg1) && integerp(arg2)) {
-      if (!((arg1->integer) >= (arg2->integer))) return nil;
+    if (intp(arg1) && intp(arg2)) {
+      if (!(getint(arg1) >= getint(arg2))) return nil;
     } else if (!(checkintfloat(GREATEREQ, arg1) >= checkintfloat(GREATEREQ, arg2))) return nil;
     arg1 = arg2;
     args = cdr(args);
@@ -3075,7 +3083,7 @@ object *fn_plusp (object *args, object *env) {
   (void) env;
   object *arg = first(args);
   if (floatp(arg)) return ((arg->single_float) > 0.0) ? tee : nil;
-  else if (integerp(arg)) return ((arg->integer) > 0) ? tee : nil;
+  else if (intp(arg)) return (getint(arg) > 0) ? tee : nil;
   else error(PLUSP, notanumber, arg);
 }
 
@@ -3083,7 +3091,7 @@ object *fn_minusp (object *args, object *env) {
   (void) env;
   object *arg = first(args);
   if (floatp(arg)) return ((arg->single_float) < 0.0) ? tee : nil;
-  else if (integerp(arg)) return ((arg->integer) < 0) ? tee : nil;
+  else if (intp(arg)) return (getint(arg) < 0) ? tee : nil;
   else error(MINUSP, notanumber, arg);
 }
 
@@ -3091,7 +3099,7 @@ object *fn_zerop (object *args, object *env) {
   (void) env;
   object *arg = first(args);
   if (floatp(arg)) return ((arg->single_float) == 0.0) ? tee : nil;
-  else if (integerp(arg)) return ((arg->integer) == 0) ? tee : nil;
+  else if (intp(arg)) return (getint(arg) == 0) ? tee : nil;
   else error(ZEROP, notanumber, arg);
 }
 
@@ -3111,7 +3119,10 @@ object *fn_evenp (object *args, object *env) {
 
 object *fn_integerp (object *args, object *env) {
   (void) env;
-  return integerp(first(args)) ? tee : nil;
+  object *obj = first(args);
+  if (integerp(obj)) return tee;
+  else if (fixnump(obj)) return tee;
+  else return nil;
 }
 
 object *fn_fixnump (object *args, object *env) {
@@ -3221,8 +3232,8 @@ object *fn_expt (object *args, object *env) {
   object *arg1 = first(args); object *arg2 = second(args);
   float float1 = checkintfloat(EXPT, arg1);
   float value = log(abs(float1)) * checkintfloat(EXPT, arg2);
-  if (integerp(arg1) && integerp(arg2) && ((arg2->integer) > 0) && (abs(value) < 21.4875)) 
-    return number(intpower(arg1->integer, arg2->integer));
+  if (intp(arg1) && intp(arg2) && (getint(arg2) > 0) && (abs(value) < 21.4875))
+    return number(intpower(getint(arg1), getint(arg2)));
   if (float1 < 0) error2(EXPT, PSTR("invalid result"));
   return makefloat(exp(value));
 }
@@ -3639,7 +3650,7 @@ object *fn_restarti2c (object *args, object *env) {
   I2CCount = 0;
   if (args != NULL) {
     object *rw = first(args);
-    if (integerp(rw)) I2CCount = rw->integer;
+    if (intp(rw)) I2CCount = getint(rw);
     read = (rw != NULL);
   }
   int address = stream & 0xFF;
@@ -3915,7 +3926,7 @@ object *fn_format (object *args, object *env) {
         if (ch2 == 'A') { prin1object(arg, pfun); indent(w, pad, pfun); }
         else if (ch2 == 'S') { printobject(arg, pfun); indent(w, pad, pfun); }
         else if (ch2 == 'D' || ch2 == 'G') { indent(w, pad, pfun); prin1object(arg, pfun); }
-        else if (ch2 == 'X' && integerp(arg)) { indent(max(width-hexwidth(arg),0), pad, pfun); pinthex(arg->integer, pfun); }
+        else if (ch2 == 'X' && intp(arg)) { indent(max(width-hexwidth(arg),0), pad, pfun); pinthex(getint(arg), pfun); }
         else if (ch2 == 'X') { indent(w, pad, pfun); prin1object(arg, pfun); }
         tilde = false;
       } else error(FORMAT, PSTR("invalid directive at position"), number(n));
@@ -4397,8 +4408,6 @@ object *eval (object *form, object *env) {
 
   if (form == NULL) return nil;
 
-  if (immediatep(form) || boxedp(form)) return form;
-
   if (symbolp(form)) {
     symbol_t name = form->name;
     if (name == NIL) error2(0, PSTR("Error 1")); // return nil;
@@ -4409,6 +4418,8 @@ object *eval (object *form, object *env) {
     else if (name <= ENDFUNCTIONS) return form;
     error(0, PSTR("undefined"), form);
   }
+
+  if (immediatep(form) || boxedp(form)) return form;
 
   if (codep(form)) error2(0, PSTR("can't evaluate CODE header"));
   
