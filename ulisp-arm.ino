@@ -3370,7 +3370,7 @@ object *fn_sort (object *args, object *env) {
 object *fn_stringfn (object *args, object *env) {
   (void) env;
   object *arg = first(args);
-  int type = arg->type;
+  int type = boxedp(arg) ? arg->type : 0;
   if (type == STRING) return arg;
   object *obj = myalloc();
   obj->type = STRING;
@@ -3398,7 +3398,7 @@ object *fn_stringfn (object *args, object *env) {
 object *fn_concatenate (object *args, object *env) {
   (void) env;
   object *arg = first(args);
-  symbol_t name = arg->name;
+  symbol_t name = symbolp(arg) ? arg->name : 0;
   if (name != STRINGFN) error2(CONCATENATE, PSTR("only supports strings"));
   args = cdr(args);
   object *result = myalloc();
