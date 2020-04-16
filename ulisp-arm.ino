@@ -4797,7 +4797,7 @@ void Highlight (uint8_t p, uint8_t invert) {
     esc(p, 'D');
     if (invert) hilight('7');
     Serial.write('(');
-    esc(p-2, 'C');
+    if (p>2) esc(p-2, 'C');
     Serial.write(')');
     if (invert) hilight('0');
   }
