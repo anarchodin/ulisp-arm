@@ -51,6 +51,8 @@ const char LispLibrary[] PROGMEM = "";
 // Immediate types
 #define immediatep(x)      ((x) != NULL && ((uintptr_t)(x) & 2) == 2) // All immediates.
 #define fixnump(x)         ((x) != NULL && ((uintptr_t)(x) & 6) == 2) // Tagged integers.
+#define typep(x)           ((x) != NULL && ((uintptr_t)(x) & 14) == 6) // Type identifiers.
+#define characterp(x)      ((x) != NULL && ((uintptr_t)(x) & 2046) == 1022) // Unicode code points.
 
 // Boxed types
 #define boxedp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 14) == 6)
@@ -59,9 +61,11 @@ const char LispLibrary[] PROGMEM = "";
 #define floatp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == FLOAT)
 #define symbolp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == SYMBOL)
 #define stringp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STRING)
-#define characterp(x)      ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == CHARACTER)
 #define arrayp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == ARRAY)
 #define streamp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STREAM)
+
+// Extracting immediates
+#define getcharacter(x)    ((uintptr_t)x>>11)
 
 // Working with types that can be either
 #define intp(x)            (integerp(x) || fixnump(x))
@@ -89,10 +93,9 @@ const char LispLibrary[] PROGMEM = "";
 #define NUMBER 54 // (3 << 4 | 6)
 #define NUMHEX 70 // (4 << 4 | 6)
 #define STREAM 86 // (5 << 4 | 6)
-#define CHARACTER 102 // (6 << 4 | 6)
-#define FLOAT 118 // (7 << 4 | 6)
-#define STRING 134 // (8 << 4 | 6)
-#define ARRAY 150 // (9 << 4 | 6)
+#define FLOAT 102 // (6 << 4 | 6)
+#define STRING 118 // (7 << 4 | 6)
+#define ARRAY 134 // (8 << 4 | 6)
 
 #define BRA 0x80000006 // Same value space as types, but high bit set.
 #define KET 0xA0000006 // Using the next two bits to code four values.
@@ -331,11 +334,8 @@ object *makefloat (float f) {
   return ptr;
 }
 
-object *character (char c) {
-  object *ptr = myalloc();
-  ptr->type = CHARACTER;
-  ptr->integer = c;
-  return ptr;
+object *character (uint32_t c) {
+  return (object *)((c << 11) | 1022);
 }
 
 object *cons (object *arg1, object *arg2) {
@@ -936,7 +936,7 @@ float checkintfloat (symbol_t name, object *obj){
 
 int checkchar (symbol_t name, object *obj) {
   if (!characterp(obj)) error(name, PSTR("argument is not a character"), obj);
-  return obj->integer;
+  return (int)obj>>11;
 }
 
 int isstream (object *obj){
@@ -964,7 +964,6 @@ int eq (object *arg1, object *arg2) {
   if (arg1->cdr != arg2->cdr) return false;  // Different values
   if (symbolp(arg1) && symbolp(arg2)) return true;  // Same symbol
   if (floatp(arg1) && floatp(arg2)) return true; // Same float
-  if (characterp(arg1) && characterp(arg2)) return true;  // Same character
   return false;
 }
 
@@ -3374,11 +3373,11 @@ object *fn_stringfn (object *args, object *env) {
   if (type == STRING) return arg;
   object *obj = myalloc();
   obj->type = STRING;
-  if (type == CHARACTER) {
+  if (characterp(arg)) {
     object *cell = myalloc();
     cell->car = NULL;
     uint8_t shift = (sizeof(int)-1)*8;
-    cell->integer = (arg->integer)<<shift;
+    cell->integer = getcharacter(arg)<<shift;
     obj->cdr = cell;
   } else if (type == SYMBOL) {
     char *s = symbolname(arg->name);
@@ -4570,15 +4569,19 @@ void pserial (char c) {
 const char ControlCodes[] PROGMEM = "Null\0SOH\0STX\0ETX\0EOT\0ENQ\0ACK\0Bell\0Backspace\0Tab\0Newline\0VT\0"
 "Page\0Return\0SO\0SI\0DLE\0DC1\0DC2\0DC3\0DC4\0NAK\0SYN\0ETB\0CAN\0EM\0SUB\0Escape\0FS\0GS\0RS\0US\0Space\0";
 
-void pcharacter (char c, pfun_t pfun) {
-  if (!tstflag(PRINTREADABLY)) pfun(c);
+void pcharacter (int c, pfun_t pfun) {
+  if (!tstflag(PRINTREADABLY)) pfun((char)c);
   else {
     pfun('#'); pfun('\\');
-    if (c > 32) pfun(c);
-    else {
-      const char *p = ControlCodes;
-      while (c > 0) {p = p + strlen(p) + 1; c--; }
-      pfstring(p, pfun);
+    if (c < 128) {
+      if (c > 32) pfun((char)c);
+      else {
+        const char *p = ControlCodes;
+        while (c > 0) {p = p + strlen(p) + 1; c--; }
+        pfstring(p, pfun);
+      }
+    } else { // Not ASCII
+      pfun('U'); pfun('+'); pinthex(c, pfun);
     }
   }
 }
@@ -4723,12 +4726,12 @@ void printobject (object *form, pfun_t pfun) {
       printobject(form, pfun);
     }
     pfun(')');
-  } else if (((uintptr_t) form & 2 == 0) && form->type == NUMHEX) pinthex(form->integer, pfun);
+  } else if (((uintptr_t) form & 2) == 0 && form->type == NUMHEX) pinthex(form->integer, pfun);
   else if (integerp(form)) pint(form->integer, pfun);
   else if (fixnump(form)) pint((int)form>>3, pfun);
   else if (floatp(form)) pfloat(form->single_float, pfun);
   else if (symbolp(form)) { if (form->name != NOTHING) pstring(symbolname(form->name), pfun); }
-  else if (characterp(form)) pcharacter(form->integer, pfun);
+  else if (characterp(form)) pcharacter(getcharacter(form), pfun);
   else if (stringp(form)) printstring(form, pfun);
   else if (arrayp(form)) printarray(form, pfun);
   else if (codep(form)) pfstring(PSTR("code"), pfun);
@@ -4970,10 +4973,16 @@ object *nextitem (gfun_t gfun) {
     if (base == 16) return numhex(result*sign); else return number(result*sign);
   } else if (base == 0) {
     if (index == 1) return character(buffer[0]);
-    const char* p = ControlCodes; char c = 0;
-    while (c < 33) {
-      if (strcasecmp(buffer, p) == 0) return character(c);
-      p = p + strlen(p) + 1; c++;
+    if (index > 2 && buffer[0] == 'U' && buffer[1] == '+') {
+      int codepoint;
+      int count = sscanf(buffer+2, "%x", &codepoint); // FIXME: Maybe avoid sscanf by refactoring.
+      if (count == 1) return character(codepoint);
+    } else {
+      const char* p = ControlCodes; char c = 0;
+      while (c < 33) {
+        if (strcasecmp(buffer, p) == 0) return character(c);
+        p = p + strlen(p) + 1; c++;
+      }
     }
     error2(0, PSTR("Unknown character"));
   }
