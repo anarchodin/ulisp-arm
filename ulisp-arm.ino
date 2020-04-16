@@ -3377,7 +3377,7 @@ object *fn_stringfn (object *args, object *env) {
     object *cell = myalloc();
     cell->car = NULL;
     uint8_t shift = (sizeof(int)-1)*8;
-    cell->integer = getcharacter(arg)<<shift;
+    cell->integer = ((char)getcharacter(arg))<<shift; // FIXME: Silent truncation of code point.
     obj->cdr = cell;
   } else if (type == SYMBOL) {
     char *s = symbolname(arg->name);
