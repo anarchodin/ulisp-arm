@@ -87,6 +87,9 @@ const char LispLibrary[] PROGMEM = "";
 
 // Constants
 
+// Symbol values
+#define tee ((object *)46) // (1 << 5) | 14
+
 // Type identifiers. Four last bits fixed at 6.
 #define ZERO 0 // (0 << 4 | 6)
 #define CODE 22 // (1 << 4 | 6)
@@ -267,7 +270,6 @@ enum flag { PRINTREADABLY, RETURNFLAG, ESCAPE, EXITEDITOR, LIBRARYLOADED, NOESC 
 volatile char Flags = 0b00001; // PRINTREADABLY set by default
 
 // Forward references
-object *tee;
 object *tf_progn (object *form, object *env);
 object *eval (object *form, object *env);
 object *read ();
@@ -413,7 +415,6 @@ void gc (object *form, object *env) {
   #if defined(printgcs)
   int start = Freespace;
   #endif
-  markobject(tee);
   markobject(GlobalEnv);
   markobject(GCStack);
   markobject(form);
@@ -450,7 +451,6 @@ void movepointer (object *from, object *to) {
 }
 
 uintptr_t compactimage (object **arg) {
-  markobject(tee);
   markobject(GlobalEnv);
   markobject(GCStack);
   object *firstfree = Workspace;
@@ -5070,7 +5070,6 @@ object *read (gfun_t gfun) {
 
 void initenv () {
   GlobalEnv = NULL;
-  tee = symbol(TEE);
 }
 
 void setup () {
