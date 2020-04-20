@@ -97,10 +97,11 @@ const char LispLibrary[] PROGMEM = "";
 #define STRING 118 // (7 << 4 | 6)
 #define ARRAY 134 // (8 << 4 | 6)
 
-#define BRA 0x80000006 // Same value space as types, but high bit set.
-#define KET 0xA0000006 // Using the next two bits to code four values.
-#define QUO 0xC0000006 // I doubt this will collide with types any time soon.
-#define DOT 0xE0000006
+// Reader tokens get four-bit (one hex digit) allocation
+#define BRA 0x07FFFFFE
+#define KET 0x17FFFFFE
+#define QUO 0x27FFFFFE
+#define DOT 0x37FFFFFE
 
 const int TRACEMAX = 3; // Number of traced functions
 enum stream { SERIALSTREAM, I2CSTREAM, SPISTREAM, SDSTREAM, STRINGSTREAM };
