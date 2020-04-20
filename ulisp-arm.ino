@@ -58,7 +58,7 @@ const char LispLibrary[] PROGMEM = "";
 // Boxed types
 #define boxedp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 14) == 6)
 #define codep(x)           ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == CODE)
-#define integerp(x)        ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type == NUMBER || (x)->type == NUMHEX))
+#define integerp(x)        ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == NUMBER)
 #define floatp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == FLOAT)
 #define stringp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STRING)
 #define arrayp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == ARRAY)
@@ -94,11 +94,10 @@ const char LispLibrary[] PROGMEM = "";
 #define ZERO 0 // (0 << 4 | 6)
 #define CODE 22 // (1 << 4 | 6)
 #define NUMBER 38 // (2 << 4 | 6)
-#define NUMHEX 54 // (3 << 4 | 6)
-#define STREAM 70 // (4 << 4 | 6)
-#define FLOAT 86 // (5 << 4 | 6)
-#define STRING 102 // (6 << 4 | 6)
-#define ARRAY 118 // (7 << 4 | 6)
+#define STREAM 54 // (3 << 4 | 6)
+#define FLOAT 70 // (4 << 4 | 6)
+#define STRING 86 // (5 << 4 | 6)
+#define ARRAY 102 // (6 << 4 | 6)
 
 // Reader tokens get four-bit (one hex digit) allocation
 #define BRA 0x07FFFFFE
