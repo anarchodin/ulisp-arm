@@ -4973,7 +4973,7 @@ object *nextitem (gfun_t gfun) {
   if (ch == '.') valid = 0; else if (digitvalue(ch)<base) valid = 1; else valid = -1;
   bool isexponent = false;
   int exponent = 0, esign = 1;
-  buffer[2] = '\0'; buffer[3] = '\0'; buffer[4] = '\0'; buffer[5] = '\0'; // In case symbol is < 5 letters
+  buffer[2] = '\0'; buffer[3] = '\0'; buffer[4] = '\0'; // In case symbol is < 5 letters
   float divisor = 10.0;
   
   while(!isspace(ch) && ch != ')' && ch != '(' && index < bufmax) {
@@ -5029,7 +5029,7 @@ object *nextitem (gfun_t gfun) {
   int x = builtin(buffer);
   if (x == NIL) return nil;
   if (x < ENDFUNCTIONS) return symbol(x);
-  else if (index <= 6 && valid40(buffer)) return symbol(pack40(buffer));
+  else if (index <= 5 && valid40(buffer)) return symbol(pack40(buffer));
   else return symbol(longsymbol(buffer));
 }
 
