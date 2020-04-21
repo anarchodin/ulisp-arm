@@ -57,14 +57,15 @@ const char LispLibrary[] PROGMEM = "";
 
 // Boxed types
 #define boxedp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 14) == 6)
-#define codep(x)           ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == CODE)
-#define integerp(x)        ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == NUMBER)
-#define floatp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == FLOAT)
-#define stringp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STRING)
-#define arrayp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == ARRAY)
-#define streamp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && (x)->type == STREAM)
+#define codep(x)           ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 510) == CODE)
+#define integerp(x)        ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 510) == NUMBER)
+#define floatp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 510) == FLOAT)
+#define stringp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 510) == STRING)
+#define arrayp(x)          ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 510) == ARRAY)
+#define streamp(x)         ((x) != NULL && ((uintptr_t)(x) & 2) == 0 && ((x)->type & 510) == STREAM)
 
 // Extracting immediates
+#define gettype(x)         ((x) & 510)
 #define getcharacter(x)    ((uintptr_t)x>>11)
 #define getname(x)         ((uintptr_t)x>>5)
 
@@ -91,6 +92,8 @@ const char LispLibrary[] PROGMEM = "";
 #define tee ((object *)46) // (1 << 5) | 14
 
 // Type identifiers. Four last bits fixed at 6.
+// The identifier as such is five bits.
+// The remaining 23 bits can be used to create parametric types.
 #define ZERO 0 // (0 << 4 | 6)
 #define CODE 22 // (1 << 4 | 6)
 #define NUMBER 38 // (2 << 4 | 6)
@@ -138,7 +141,6 @@ typedef struct sobject {
     struct {
       unsigned int type;
       union {
-        symbol_t name;
         int integer;
         float single_float;
       };
@@ -406,7 +408,7 @@ void markobject (object *obj) {
   if (marked(obj)) return;
 
   object* arg = car(obj);
-  unsigned int type = obj->type;
+  unsigned int type = gettype(obj->type);
   mark(obj);
   
   if ((type & 2) == 0) { // cons with allocated car
@@ -423,11 +425,6 @@ void markobject (object *obj) {
     goto MARK;
   }
 
-  if (type == ARRAY) {
-    obj = cdr(obj);
-    goto MARK;
-  }
-  
   if (type == STRING) {
     obj = cdr(obj);
     while (obj != NULL) {
@@ -466,7 +463,7 @@ void gc (object *form, object *env) {
 void movepointer (object *from, object *to) {
   for (int i=0; i<WORKSPACESIZE; i++) {
     object *obj = &Workspace[i];
-    unsigned int type = (obj->type) & ~MARKBIT;
+    unsigned int type = gettype(obj->type);
     if (marked(obj) && ((((uintptr_t)type & 6) == 0) || type == ARRAY || type == STRING)) {
       if (car(obj) == (object *)((uintptr_t)from | MARKBIT)) 
         car(obj) = (object *)((uintptr_t)to | MARKBIT);
@@ -476,7 +473,7 @@ void movepointer (object *from, object *to) {
   // Fix strings
   for (int i=0; i<WORKSPACESIZE; i++) {
     object *obj = &Workspace[i];
-    if (marked(obj) && ((obj->type) & ~MARKBIT) == STRING) {
+    if (marked(obj) && stringp(obj)) {
       obj = cdr(obj);
       while (obj != NULL) {
         if (cdr(obj) == to) cdr(obj) = from;
@@ -2284,7 +2281,7 @@ object *sp_defcode (object *args, object *env) {
       object *pair = car(globals);
       if (pair != NULL && car(pair) != var) { // Exclude me if I already exist
         object *codeid = second(pair);
-        if (codeid->type == CODE) {
+        if (codep(codeid)) {
           if (startblock(codeid) < smallest && startblock(codeid) >= origin) {
             smallest = startblock(codeid);
             block = codeid;
@@ -3849,7 +3846,7 @@ object *fn_pprintall (object *args, object *env) {
     pln(pfun);
     if (consp(val) && symbolp(car(val)) && getname(car(val)) == LAMBDA) {
       superprint(cons(symbol(DEFUN), cons(var, cdr(val))), 0, pfun);
-    } else if (consp(val) && car(val)->type == CODE) {
+    } else if (consp(val) && codep(car(val))) {
       superprint(cons(symbol(DEFCODE), cons(var, cdr(val))), 0, pfun);
     } else {
       superprint(cons(symbol(DEFVAR), cons(var, cons(quote(val), NULL))), 0, pserial);
@@ -4573,7 +4570,7 @@ object *eval (object *form, object *env) {
       goto EVAL;
     }
 
-    if (car(function)->type == CODE) {
+    if (codep(car(function))) {
       int n = listlength(DEFCODE, second(function));
       if (nargs<n) error2(getname(fname), toofewargs);
       if (nargs>n) error2(getname(fname), toomanyargs);
